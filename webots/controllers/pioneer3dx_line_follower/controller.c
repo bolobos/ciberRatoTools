@@ -18,13 +18,13 @@ const controller_t activeController=NONE;
 
 // PID constants:
 // Kp is the same for P and PID controller
-const float Kp = 1;       // Kp - proportional constant
+const float Kp = 1.55;       // Kp - proportional constant
 // const float Ti = ;     // Ti - Integration time
 //      set to FLT_MAX to disable I component
 const float Ti = FLT_MAX;
 
 //const float Td = 0*h;     // Td - differential time
-float Td = 0.0;     // Td - differential time
+float Td = 1.5;     // Td - differential time
 
 const float max_u = 10;  // max_u - saturation value for control signal
 
@@ -32,7 +32,7 @@ const float max_u = 10;  // max_u - saturation value for control signal
 const float deltah=0.5;
 
 /* value for bang-bang control */
-const float bangvalue = 1.25;
+const float bangvalue = 3;
 
 float controller(controller_t type, float r, float y)
 {

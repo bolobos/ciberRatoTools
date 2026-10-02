@@ -16,7 +16,7 @@ TexturedBackground {
 TexturedBackgroundLight {
 }
 RectangleArena {
-  floorSize 20 4
+  floorSize 30 4
 }
 Pioneer3dx {
   translation -9.00337 0.45 0.0948156
