@@ -1,0 +1,235 @@
+"""C2 Webots controller: shortest route to the farthest reachable cell and back."""
+
+from collections import deque
+from pathlib import Path
+import math
+import xml.etree.ElementTree as ET
+
+from controller import Robot
+
+
+CELL_SIZE = 0.15
+MAX_WHEEL_SPEED = 6.28
+CRUISE_SPEED = 2.2
+TURN_SPEED = 1.4
+WAYPOINT_TOLERANCE = 0.035
+
+
+def load_maze():
+    """Build the maze graph from the same XML file used by the supervisor."""
+    xml_path = (
+        Path(__file__).resolve().parent.parent
+        / "C2_supervisor"
+        / "C2-lab.xml"
+    )
+    root = ET.parse(str(xml_path)).getroot()
+
+    rows = int(round(float(root.attrib["Height"]) / 2.0))
+    cols = int(round(float(root.attrib["Width"]) / 2.0))
+    vertical_walls = set()
+    horizontal_walls = set()
+
+    for element in root.findall("Row"):
+        position = int(element.attrib["Pos"])
+        pattern = element.attrib["Pattern"]
+
+        if position % 2 == 0:
+            cell_row = position // 2
+            for index, character in enumerate(pattern):
+                if character == "|":
+                    boundary_col = (index + 1) // 3
+                    if 0 < boundary_col < cols:
+                        vertical_walls.add((cell_row, boundary_col))
+        else:
+            boundary_row = (position + 1) // 2
+            for col in range(cols):
+                index = col * 3
+                if index < len(pattern) and pattern[index] == "-":
+                    horizontal_walls.add((boundary_row, col))
+
+    graph = {}
+    for row in range(rows):
+        for col in range(cols):
+            neighbors = []
+            if row + 1 < rows and (row + 1, col) not in horizontal_walls:
+                neighbors.append((row + 1, col))
+            if row > 0 and (row, col) not in horizontal_walls:
+                neighbors.append((row - 1, col))
+            if col + 1 < cols and (row, col + 1) not in vertical_walls:
+                neighbors.append((row, col + 1))
+            if col > 0 and (row, col) not in vertical_walls:
+                neighbors.append((row, col - 1))
+            graph[(row, col)] = neighbors
+
+    target = root.find("Target")
+    if target is None:
+        raise ValueError("C2-lab.xml is missing its Target element")
+
+    # This matches the supervisor's conversion from lab coordinates to cells.
+    start_col = int(float(target.attrib["X"]) / 2.0 + 0.5)
+    start_row = int(float(target.attrib["Y"]) / 2.0 + 0.5)
+    start = (
+        max(0, min(rows - 1, start_row)),
+        max(0, min(cols - 1, start_col)),
+    )
+    return graph, start
+
+
+def shortest_paths(graph, start):
+    distances = {start: 0}
+    previous = {start: None}
+    queue = deque([start])
+
+    while queue:
+        cell = queue.popleft()
+        for neighbor in graph[cell]:
+            if neighbor not in distances:
+                distances[neighbor] = distances[cell] + 1
+                previous[neighbor] = cell
+                queue.append(neighbor)
+
+    return distances, previous
+
+
+def make_path(previous, goal):
+    path = []
+    cell = goal
+    while cell is not None:
+        path.append(cell)
+        cell = previous[cell]
+    return list(reversed(path))
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def wrap_angle(angle):
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def dark_view_fraction(camera):
+    """Use the camera's lower, forward region to notice dark maze walls."""
+    image = camera.getImage()
+    if image is None:
+        return 0.0
+
+    width = camera.getWidth()
+    height = camera.getHeight()
+    dark = 0
+    total = 0
+
+    for y in range(height // 2, height * 4 // 5):
+        for x in range(width * 2 // 5, width * 3 // 5):
+            red = camera.imageGetRed(image, width, x, y)
+            green = camera.imageGetGreen(image, width, x, y)
+            blue = camera.imageGetBlue(image, width, x, y)
+            if red + green + blue < 100:
+                dark += 1
+            total += 1
+
+    return dark / total if total else 0.0
+
+
+robot = Robot()
+timestep = int(robot.getBasicTimeStep())
+
+# Keep the GPS, camera, compass, and customData already used by this controller.
+gps = robot.getDevice("gps")
+gps.enable(timestep)
+camera = robot.getDevice("camera")
+camera.enable(timestep)
+compass = robot.getDevice("compass")
+compass.enable(timestep)
+
+# The e-puck's two wheel motors must be in velocity control mode to move.
+left_motor = robot.getDevice("left wheel motor")
+right_motor = robot.getDevice("right wheel motor")
+left_motor.setPosition(float("inf"))
+right_motor.setPosition(float("inf"))
+left_motor.setVelocity(0.0)
+right_motor.setVelocity(0.0)
+
+
+def stop_robot():
+    left_motor.setVelocity(0.0)
+    right_motor.setVelocity(0.0)
+
+
+try:
+    graph, start_cell = load_maze()
+    distances, previous = shortest_paths(graph, start_cell)
+    turnaround = max(distances, key=distances.get)
+    outbound = make_path(previous, turnaround)
+    # Go to the farthest reachable cell, then retrace the shortest route home.
+    round_trip = outbound + list(reversed(outbound[:-1]))
+    print("C2 controller started")
+    print("customData:", robot.getCustomData())
+    print("Start:", start_cell, "turnaround:", turnaround)
+    print("Round-trip cell count:", len(round_trip))
+except Exception as error:
+    stop_robot()
+    print("C2 controller setup failed:", error)
+    raise
+
+# Wait for valid first sensor readings, then anchor the maze to the GPS position.
+if robot.step(timestep) == -1:
+    stop_robot()
+    raise SystemExit
+
+initial_position = gps.getValues()
+anchor_x, anchor_y = initial_position[0], initial_position[1]
+waypoint_index = 1
+last_log_time = -1
+print("GPS start:", initial_position)
+print("Compass start:", compass.getValues())
+
+while robot.step(timestep) != -1:
+    position = gps.getValues()
+    compass_values = compass.getValues()
+
+    if waypoint_index >= len(round_trip):
+        stop_robot()
+        print("Round trip complete; robot is back at the start.")
+        break
+
+    row, col = round_trip[waypoint_index]
+    target_x = anchor_x + (col - start_cell[1]) * CELL_SIZE
+    target_y = anchor_y + (row - start_cell[0]) * CELL_SIZE
+    dx = target_x - position[0]
+    dy = target_y - position[1]
+    distance = math.hypot(dx, dy)
+
+    if distance <= WAYPOINT_TOLERANCE:
+        waypoint_index += 1
+        continue
+
+    # Convert the compass north vector to the robot's world-plane heading.
+    heading = math.atan2(compass_values[0], compass_values[1])
+    desired_heading = math.atan2(dy, dx)
+    heading_error = wrap_angle(desired_heading - heading)
+
+    # Camera view of a dark wall slows the robot while it follows the planned path.
+    camera_wall = dark_view_fraction(camera) > 0.35
+    forward_speed = 1.2 if camera_wall else CRUISE_SPEED
+
+    if abs(heading_error) > 0.30:
+        turn = TURN_SPEED if heading_error > 0.0 else -TURN_SPEED
+        left_speed = -turn
+        right_speed = turn
+    else:
+        correction = clamp(2.0 * heading_error, -0.8, 0.8)
+        left_speed = forward_speed - correction
+        right_speed = forward_speed + correction
+
+    left_motor.setVelocity(clamp(left_speed, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
+    right_motor.setVelocity(clamp(right_speed, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED))
+
+    if int(robot.getTime()) > last_log_time:
+        last_log_time = int(robot.getTime())
+        print("GPS:", position, "Compass:", compass_values,
+              "Waypoint:", waypoint_index, "/", len(round_trip) - 1,
+              "distance=%.3f heading_error=%.3f wheels=(%.2f, %.2f)"
+              % (distance, heading_error, left_speed, right_speed))
+
+stop_robot()

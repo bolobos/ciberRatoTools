@@ -25,19 +25,10 @@
 
 // cNodebLinks
 
-#ifndef MicWindows
+#include <cfloat>
 
-#include <values.h>
-
-#else
-
-#ifndef MAXFLOAT
-#define MAXFLOAT (1e30)
-#endif
 #ifndef MAXINT
 #define MAXINT (0x7fffffff)
-#endif
-
 #endif
 
 #define ROBOT_RADIUS 0.07
@@ -183,7 +174,7 @@ double cbGraph::dist(cbNode from, cbNode to)
     //int count=0;
 
     for(n=0;n<nodes.size();n++)
-       distMinToNode[n]=MAXFLOAT;
+       distMinToNode[n]=FLT_MAX;
 
     aux=findNode(from);
     if(aux==-1) { 
@@ -199,8 +190,8 @@ double cbGraph::dist(cbNode from, cbNode to)
 
     if(nodes[t].pos() == nodes[aux].pos()) return 0.0;
 
-    distMin=MAXFLOAT;
-    distMinToFollow=MAXFLOAT;
+    distMin=FLT_MAX;
+    distMinToFollow=FLT_MAX;
     there=false;
     while(toFollow.size()>0 && (!there || distMinToFollow < distMin)) {
         // choose nodeToFollow from toFollow list
@@ -242,7 +233,7 @@ double cbGraph::dist(cbNode from, cbNode to)
 		fprintf(fdebug,"%7d",n);
 	fprintf(fdebug,"\n");
         for(n=0;n<nodes.size();n++)
-		if(distMinToNode[n]<MAXFLOAT)
+		if(distMinToNode[n]<FLT_MAX)
                     fprintf(fdebug,"%7.2f",distMinToNode[n]);
 		else
                     fprintf(fdebug,"%7s","MAX");;

@@ -118,7 +118,7 @@ void determine_lab_map_centered_on_robot_initial_pos(cbLab *lab)
 
                   // find horizontal lines
                   for(int cy = 1; cy < cells_height; cy++) {
-                       for(int cx = 1; cx < lmap_width-1; cx++) {
+                       for(int cx = 1; cx < cells_width; cx++) {
                             if(lab->isInside(cbPoint(cx*PATHCUBESIZE+0.5*PATHCUBESIZE,cy*PATHCUBESIZE))){
                                  lmap[(cy-initCell.y)*2+lmap_height/2][(cx-initCell.x)*2+1+lmap_width/2] = '-';
                             }
