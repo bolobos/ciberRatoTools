@@ -78,6 +78,6 @@ All set! To start the simulation click ![start](start.png) button.
   University of Aveiro,
   efp@ua.pt
 
- Copyright (C) 2001-2024 Universidade de Aveiro
+ Copyright (C) 2001-2026 Universidade de Aveiro
 
 
