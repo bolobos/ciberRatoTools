@@ -43,8 +43,8 @@ CENTER_ROW = MAP_ROWS // 2      # row 10
 
 # Physical distances (in meters) - identical to the mapping controller
 FIRST_STRAIGHT_DISTANCE = 0.082    # Only for the very first straight movement
-DEFAULT_STRAIGHT_DISTANCE = 0.146  # Subsequent straight movements (2 cells: through a junction)
-POST_TURN_DISTANCE = 0.016         # Forward distance after a turn
+DEFAULT_STRAIGHT_DISTANCE = 0.148  # Subsequent straight movements (2 cells: through a junction)
+POST_TURN_DISTANCE = 0.017         # Forward distance after a turn
 FINAL_APPROACH_DISTANCE = DEFAULT_STRAIGHT_DISTANCE / 2   # 1 cell: cell centre -> checkpoint centre
 
 # Costs of the actions (unit = one STRAIGHT movement)
@@ -66,6 +66,7 @@ ACTION_ORDER = ("STRAIGHT", "LEFT", "RIGHT", "TURN180", "VISIT")   # Exploration
 HEADING_NAMES = {0: "North", 1: "East", 2: "South", 3: "West"}
 
 is_first_movement = True    # The first straight movement uses FIRST_STRAIGHT_DISTANCE
+step_counter = 0
 
 # Motors
 left_motor = robot.getDevice('left wheel motor')
@@ -352,46 +353,128 @@ def render_route(rows, steps, start_cell):
     return "\n".join(line for line in lines if line.strip())
 
 
+def log_step_status(action_name="", details=""):
+    if not DEBUG:
+        return
+    gps_x, gps_y = get_gps_position()
+    display_heading = bearing_to_grid_heading(get_bearing())
+    print("\n" + "-" * 70)
+    print(f"[STEP #{step_counter:04d}] Action: {action_name}")
+    print(f"  Sensors (Real) : GPS=(X={gps_x:.3f}, Y={gps_y:.3f}) | "
+          f"Compass={get_bearing():.1f}° ({HEADING_NAMES[display_heading]})")
+    if details:
+        print(f"  Details        : {details}")
+    print("-" * 70)
+
+
+def turnInPlace(angle_deg, direction, speed=MAX_SPEED):
+    global step_counter
+    accumulated_angle, previous_heading = 0.0, get_bearing()
+    if direction == "LEFT":
+        left_sign, right_sign = -1, 1
+    else:  # "RIGHT"
+        left_sign, right_sign = 1, -1
+
+    left_motor.setVelocity(left_sign * speed * 0.5)
+    right_motor.setVelocity(right_sign * speed * 0.5)
+
+    while robot.step(timestep) != -1:
+        step_counter += 1
+        current = get_bearing()
+        accumulated_angle += abs(get_delta_angle(current, previous_heading))
+        previous_heading = current
+        remaining = angle_deg - accumulated_angle
+
+        log_step_status("turnInPlace", f"Direction: {direction} | Remaining: {remaining:.2f}°")
+
+        if remaining < 15.0:
+            reduced = max(1.0, speed * (remaining / 15.0))
+            left_motor.setVelocity(left_sign * reduced * 0.5)
+            right_motor.setVelocity(right_sign * reduced * 0.5)
+
+        if accumulated_angle >= angle_deg:
+            # 1. Full motor stop
+            left_motor.setVelocity(0.0)
+            right_motor.setVelocity(0.0)
+
+            # 2. Wait for physical stabilization (~0.3s) before next action
+            for _ in range(10):
+                robot.step(timestep)
+            break
+
+
 # -------------------------------------------------------------
 # PHYSICAL MOVEMENT FUNCTIONS (same as the mapping controller)
 # -------------------------------------------------------------
 def goStraight(distance=0.5, speed=MAX_SPEED):
+    global step_counter
     start_x, start_y = get_gps_position()
     target_heading = get_bearing()
     kp = 0.08
 
     while robot.step(timestep) != -1:
-        is_left_black = gs_left.getValue() < GROUND_BLACK_THRESHOLD
-        is_right_black = gs_right.getValue() < GROUND_BLACK_THRESHOLD
+        step_counter += 1
+
+        v_left = gs_left.getValue()
+        v_center = gs_center.getValue()
+        v_right = gs_right.getValue()
+
+        is_left_black = v_left < GROUND_BLACK_THRESHOLD
+        is_center_black = v_center < GROUND_BLACK_THRESHOLD
+        is_right_black = v_right < GROUND_BLACK_THRESHOLD
+
+        correction_state = ""
 
         # 1. Only the left sensor touches black -> recenter left
         if is_left_black and not is_right_black:
             left_motor.setVelocity(speed * 0.5)
             right_motor.setVelocity(speed * 0.9)
+            correction_state = "RECENTERING LEFT"
         # 2. Only the right sensor touches black -> recenter right
         elif is_right_black and not is_left_black:
             left_motor.setVelocity(speed * 0.9)
             right_motor.setVelocity(speed * 0.5)
+            correction_state = "RECENTERING RIGHT"
         # 3. Otherwise: compass navigation
         else:
             error = get_heading_error(target_heading, get_bearing())
             left_motor.setVelocity(max(-MAX_SPEED, min(MAX_SPEED, speed + (kp * error))))
             right_motor.setVelocity(max(-MAX_SPEED, min(MAX_SPEED, speed - (kp * error))))
+            if is_center_black and not is_left_black and not is_right_black:
+                correction_state = "PERFECTLY CENTERED"
+            else:
+                correction_state = "COMPASS ALIGNMENT"
 
         curr_x, curr_y = get_gps_position()
         traveled = math.sqrt((curr_x - start_x) ** 2 + (curr_y - start_y) ** 2)
+
+        if DEBUG:
+            debug_gs = (
+                f"GS [L:{v_left:.0f} {'[BLACK]' if is_left_black else '[WHITE]'} | "
+                f"C:{v_center:.0f} {'[BLACK]' if is_center_black else '[WHITE]'} | "
+                f"R:{v_right:.0f} {'[BLACK]' if is_right_black else '[WHITE]'}] "
+                f"-> Status: {correction_state}"
+            )
+            debug_print(f"  [GROUND SENSORS DEBUG] {debug_gs}")
+
+        log_step_status("goStraight", f"Traveled: {traveled:.3f}m / {distance:.3f}m | {correction_state}")
+
         if traveled >= distance:
             break
 
 def turn180(forward_distance=0.0, speed=MAX_SPEED):
+    global step_counter
     accumulated_angle, previous_heading = 0.0, get_bearing()
     left_motor.setVelocity(-speed * 0.5)
     right_motor.setVelocity(speed * 0.5)
     while robot.step(timestep) != -1:
+        step_counter += 1
         current = get_bearing()
         accumulated_angle += abs(get_delta_angle(current, previous_heading))
         previous_heading = current
         remaining = 180.0 - accumulated_angle
+
+        log_step_status("turn180", f"Remaining: {remaining:.2f}°")
 
         if remaining < 15.0:
             reduced = max(1.0, speed * (remaining / 15.0))
@@ -403,26 +486,36 @@ def turn180(forward_distance=0.0, speed=MAX_SPEED):
         goStraight(distance=forward_distance, speed=speed)
 
 def goLeft(forward_distance=0.0, speed=MAX_SPEED):
+    global step_counter
     accumulated_angle, previous_heading = 0.0, get_bearing()
     left_motor.setVelocity(speed * 0.4)
     right_motor.setVelocity(speed)
     while robot.step(timestep) != -1:
+        step_counter += 1
         current = get_bearing()
         accumulated_angle += abs(get_delta_angle(current, previous_heading))
         previous_heading = current
+
+        log_step_status("goLeft", f"Remaining: {88.0 - accumulated_angle:.2f}°")
+
         if accumulated_angle >= 88.0:
             break
     if forward_distance > 0:
         goStraight(distance=forward_distance, speed=speed)
 
 def goRight(forward_distance=0.0, speed=MAX_SPEED):
+    global step_counter
     accumulated_angle, previous_heading = 0.0, get_bearing()
     left_motor.setVelocity(speed)
     right_motor.setVelocity(speed * 0.4)
     while robot.step(timestep) != -1:
+        step_counter += 1
         current = get_bearing()
         accumulated_angle += abs(get_delta_angle(current, previous_heading))
         previous_heading = current
+
+        log_step_status("goRight", f"Remaining: {88.0 - accumulated_angle:.2f}°")
+
         if accumulated_angle >= 88.0:
             break
     if forward_distance > 0:
@@ -438,7 +531,7 @@ def execute_plan(steps):
     for index, step in enumerate(steps, 1):
         action = step["action"]
 
-        # Safety check: the real heading must match the planned one
+        # Safety check: the real heading must match the planned one.
         real_heading = bearing_to_grid_heading(get_bearing())
         if real_heading != step["heading"]:
             print(f"[WARNING] Step {index}: heading {HEADING_NAMES[real_heading]} "
@@ -448,11 +541,26 @@ def execute_plan(steps):
                     f"facing {HEADING_NAMES[step['heading']]}"
                     + (f" | checkpoint {step['checkpoint']}" if step["checkpoint"] is not None else ""))
 
-        if action == "STRAIGHT":
-            if is_first_movement:
+        # At the starting position, pivot first for an immediate left/right turn.
+        # Once the robot has started moving, use the normal arc-turn functions.
+        if is_first_movement:
+            if action == "STRAIGHT":
                 goStraight(distance=FIRST_STRAIGHT_DISTANCE)
-            else:
-                goStraight(distance=DEFAULT_STRAIGHT_DISTANCE)
+            elif action == "LEFT":
+                turnInPlace(90.0, "LEFT")
+                goStraight(distance=FIRST_STRAIGHT_DISTANCE)
+            elif action == "RIGHT":
+                turnInPlace(90.0, "RIGHT")
+                goStraight(distance=FIRST_STRAIGHT_DISTANCE)
+            elif action == "TURN180":
+                turn180(forward_distance=FIRST_STRAIGHT_DISTANCE)
+            elif action == "VISIT":
+                goStraight(distance=FINAL_APPROACH_DISTANCE)
+                turn180(forward_distance=FINAL_APPROACH_DISTANCE)
+            elif action == "FINAL":
+                goStraight(distance=FINAL_APPROACH_DISTANCE)
+        elif action == "STRAIGHT":
+            goStraight(distance=DEFAULT_STRAIGHT_DISTANCE)
         elif action == "LEFT":
             goLeft(forward_distance=POST_TURN_DISTANCE)
         elif action == "RIGHT":
@@ -460,10 +568,10 @@ def execute_plan(steps):
         elif action == "TURN180":
             turn180(forward_distance=POST_TURN_DISTANCE)
         elif action == "VISIT":
-            goStraight(distance=FINAL_APPROACH_DISTANCE)   # Up to the checkpoint centre
-            turn180(forward_distance=FINAL_APPROACH_DISTANCE)   # U-turn on it, back to the cell centre
+            goStraight(distance=FINAL_APPROACH_DISTANCE)
+            turn180(forward_distance=FINAL_APPROACH_DISTANCE)
         elif action == "FINAL":
-            goStraight(distance=FINAL_APPROACH_DISTANCE)   # Stops ON the last checkpoint
+            goStraight(distance=FINAL_APPROACH_DISTANCE)
 
         is_first_movement = False
 

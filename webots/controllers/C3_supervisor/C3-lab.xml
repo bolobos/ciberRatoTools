@@ -5,6 +5,14 @@
 		<Target X="16" Y="4.0" Radius="1.0"/>
 		<Beacon X="18" Y="10.0" Height="4.0"/>
 		<Target X="18" Y="10.0" Radius="1.0"/>
+		<Beacon X="2" Y="2.0" Height="4.0"/>
+    <Target X="2" Y="2.0" Radius="1.0"/>
+    <Beacon X="10" Y="6.0" Height="4.0"/>
+    <Target X="10" Y="6.0" Radius="1.0"/>
+    <Beacon X="26" Y="12.0" Height="4.0"/>
+    <Target X="26" Y="12.0" Radius="1.0"/>
+    <Beacon X="26" Y="2.0" Height="4.0"/>
+    <Target X="26" Y="2.0" Radius="1.0"/>
 		<Row  Pos="12" Height="0.0" Pattern="                                         "  />
 		<Row  Pos="11" Height="0.0" Pattern="  +  +--+--+--+--+--+--+  +  +--+--+--+  "  />
 		<Row  Pos="10" Height="0.0" Pattern="           |  |        |     |        |  "  />
