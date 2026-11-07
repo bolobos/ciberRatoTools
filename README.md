@@ -1,4 +1,14 @@
 
+--- 
+
+# TO EXECUTE C2  : YOU CAN EXECUTE THE SETUP.SH AVAILABLE IN THE C2_pClient FOLDER
+# TO EXECUTE C3  : YOU CAN EXECUTE THE SETUP.SH AVAILABLE IN THE C3_pClient FOLDER
+
+# IN BOTH CASES, IT WILL COMPILE AND EXECUTE THE CODE ON WEBOTS
+
+---
+
+
 # CiberRato Robot Simulation Environment <br/> Universidade de Aveiro / IEETA 
 
 ## Information
